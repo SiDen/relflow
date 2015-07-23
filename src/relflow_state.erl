@@ -4,65 +4,65 @@
 -module(relflow_state).
 
 -record(relflow_st, {
-            rebar_state,
-            nextappver,
-            oldrelver,
-            nextver
-         }).
+    rebar_state,
+    oldrelver,
+    currelver,
+    nextrelver
+}).
 
 -export([
-    new/1,
-    task/1,
-    version/1,
-    relname/1,
-    build_dir/1,
-    upfrom/1,
-    profile/1,
-    force/1,
     autogit/1,
-    rebar_state/1,
+    build_dir/1,
+    check/1,
+    currelver/1,
+    currelver/2,
+    force/1,
+    include_untracked/1,
+    new/1,
+    nextrelver/1,
+    nextrelver/2,
     nextver/1,
-    set_default_nextver/2,
     oldrelver/1,
     oldrelver/2,
-    nextappver/1,
-    nextappver/2
+    profile/1,
+    rebar_state/1,
+    task/1,
+    upfrom/1,
+    version/1
 ]).
-
-new(RebarSt) -> #relflow_st{rebar_state = RebarSt}.
-
-task(State) -> parg(task, State).
-
-version(State) -> parg(version, State).
-
-rebar_state(#relflow_st{rebar_state = R}) -> R.
-
-relname(_State) -> "ircshard".
-
-build_dir(#relflow_st{rebar_state = State}) -> rebar_dir:base_dir(State).
-
-upfrom(State) -> parg(upfrom, State).
 
 autogit(State) -> parg(autogit, State) == true.
 
-profile(State) -> lists:last(filename:split(build_dir(State))).
+build_dir(#relflow_st{rebar_state = State}) -> rebar_dir:base_dir(State).
 
-nextappver(#relflow_st{nextappver=V}) -> V.
-nextappver(NV, State = #relflow_st{}) -> State#relflow_st{nextappver=NV}.
+check(State) -> parg(check, State) == true.
+
+currelver(#relflow_st{currelver=V}) -> V.
+currelver(NV, State = #relflow_st{}) -> State#relflow_st{currelver=NV}.
+
+force(State) -> parg(force, State) == true.
+
+include_untracked(State) -> parg(include_untracked, State) == true.
+
+new(RebarSt) -> #relflow_st{rebar_state = RebarSt}.
+
+nextrelver(#relflow_st{nextrelver=V}) -> V.
+nextrelver(NV, State = #relflow_st{}) -> State#relflow_st{nextrelver=NV}.
+
+nextver(State) -> parg(nextver, State).
 
 oldrelver(#relflow_st{oldrelver=V}) -> V.
 oldrelver(NV, State = #relflow_st{}) -> State#relflow_st{oldrelver=NV}.
 
-nextver(#relflow_st{nextver=V}) -> V.
+profile(State) -> lists:last(filename:split(build_dir(State))).
 
-%% only set if not provided on cli options
-set_default_nextver(NV, State = #relflow_st{}) ->
-   case parg(nextver, State) of
-       "auto" -> State#relflow_st{nextver=NV};
-       V      -> State#relflow_st{nextver=V}
-   end.
+rebar_state(#relflow_st{rebar_state = R}) -> R.
 
-force(State) -> parg(force, State) == true.
+task(State) -> parg(task, State).
+
+upfrom(State) -> parg(upfrom, State).
+
+version(State) -> parg(version, State).
 
 %%
 

@@ -1,8 +1,24 @@
 %% rewrite app and app.src files to update vsn field
 -module(relflow_rewriter).
--export([set_appfile_version/2, set_rebar_relx_version/2]).
+
+-export([
+    add_appup_instructions/4,
+    set_appfile_version/2,
+    set_rebar_relx_apps/2,
+    set_rebar_relx_version/2
+]).
 
 -define(AppHeader, "%% Vsn auto-managed by relflow utility.\n%% DO NOT CHANGE VSN FIELD MANUALLY!").
+
+add_appup_instructions(FileName, OldVsn, NewVsn, Instructions) ->
+    ok = filelib:ensure_dir(FileName),
+    OldContent = case file:consult(FileName) of
+        {ok, [C]} -> C;
+        _ -> undefined
+    end,
+    NewContent = relflow_appup:add_instructions(OldContent, OldVsn, NewVsn,
+                                                                Instructions),
+    ok = file:write_file(FileName, io_lib:format("~p.", [NewContent])).
 
 set_appfile_version(Filepath, NewVsn) when is_list(Filepath) ->
     rebar_api:info("Rewriting vsn in ~s",[ filename:basename(Filepath)]),
@@ -15,30 +31,32 @@ set_appfile_version(Filepath, NewVsn) when is_list(Filepath) ->
     ok.
 
 set_rebar_relx_version(Filepath, NewVsn) ->
-    {ok, Bin} = file:read_file(Filepath),
-    Lines = lists:map(fun binary_to_list/1, binary:split(Bin, <<"\n">>, [global])),
-    case set_rebar_relx_version_1(NewVsn, Lines, false, []) of
-        {error, _} = E ->
-            E;
-        Contents ->
-            ok = file:write_file(Filepath, strip(Contents))
+    set_rebar_relx_release(Filepath, fun({release, {AppName, _Vsn}, Apps}) ->
+        {release, {AppName, NewVsn}, Apps}
+    end).
+
+set_rebar_relx_apps(Filepath, NewApps) ->
+    set_rebar_relx_release(Filepath, fun({release, {AppName, Vsn}, _Apps}) ->
+        {release, {AppName, Vsn}, NewApps}
+    end).
+
+set_rebar_relx_release(Filepath, F) ->
+    case file:consult(Filepath) of
+        {ok, Reltool} ->
+            [H | T] = lists:map(fun
+                ({relx, L}) ->
+                    NL = lists:map(fun
+                            ({release, {_AppName, _Vsn}, _Apps} = Release) ->
+                                F(Release);
+                        (E) -> E
+                    end, L),
+                    {relx, NL};
+                (V) -> V
+            end, Reltool),
+            ok = file:write_file(Filepath, io_lib:format("~p.~n", [H])),
+            lists:foreach(fun(P) ->
+                ok = file:write_file(Filepath,
+                                        io_lib:format("~p.~n", [P]), [append])
+            end, T);
+        {error, _} -> {error, parse_rebar_config}
     end.
-
-set_rebar_relx_version_1(NewVsn, [Line | Lines], Found, Acc) ->
-    case string:str(Line, "relflow-release-version-marker") > 0 of
-        true ->
-            NewLine = io_lib:format("    \"~s\" %% relflow-release-version-marker", [NewVsn]),
-            set_rebar_relx_version_1(NewVsn, Lines, true, [NewLine|Acc]);
-        false ->
-            set_rebar_relx_version_1(NewVsn, Lines, Found, [Line|Acc])
-    end;
-set_rebar_relx_version_1(_, [], false, _Acc) ->
-    %rebar_api:error("You must have a '%% relflow-release-version-marker' line in rebar.config",[]),
-    {error, relflow_marker_missing};
-set_rebar_relx_version_1(_, [], true, Acc) ->
-    [ [Line, <<"\n">>] || Line <- lists:reverse(Acc) ].
-
-strip(IO) ->
-    S = binary_to_list(iolist_to_binary([IO])),
-    string:strip(S).
-

@@ -1,25 +1,24 @@
 -module(relflow_appup).
--export([generate_appups/2]).
+-export([
+    add_instructions/4,
+    diff_instructions/2,
+    extract_instructions/3,
+    generate_appups/2
+]).
 
 generate_appups(Map, State) when is_map(Map) ->
-    maps:map(fun(K,V) ->
-          create_appup_term(generate_appup(K,V,State))
+    maps:map(fun(K, V) ->
+        case maps:find(op, V) of
+            {ok, added} -> V;
+            {ok, deleted} -> V;
+            error -> generate_appup_ops(K, V, State)
+        end
     end, Map).
 
 %%
 
-create_appup_term(#{vsn := FromVer,
-                    next_vsn := ToVer,
-                    appup_instructions := Instructions} = M) ->
-    T = {ToVer,
-         [{FromVer, Instructions}],
-         [{FromVer, []}]
-        },
-    maps:put(appup_term, T, M).
-
-generate_appup(AppName, AppMap = #{changes := Changes, vsn := Vsn}, State) ->
-    NextVsn = relflow_state:nextappver(State),
-    Ctx = #{appname => AppName, vsn => Vsn, next_vsn => NextVsn, profile => relflow_state:profile(State)},
+generate_appup_ops(AppName, AppMap = #{changes := Changes}, State) ->
+    Ctx = #{appname => AppName, profile => relflow_state:profile(State)},
     Instructions = maps:fold(
         fun(Mod, ModMap, InstrAcc) ->
             [module_instructions(Mod, ModMap, Ctx) | InstrAcc]
@@ -27,48 +26,34 @@ generate_appup(AppName, AppMap = #{changes := Changes, vsn := Vsn}, State) ->
         [],
         Changes
     ),
-    SortedInstructions = sort_instructions(
-                           lists:flatten(
-                             lists:reverse(Instructions))),
-    AppMap2 = AppMap#{ vsn => Vsn, next_vsn => NextVsn},
-    maps:put(appup_instructions, SortedInstructions, AppMap2).
+    maps:put(appup_instructions, Instructions, AppMap).
 
 
 module_instructions(Mod, #{status := added}, _Ctx) ->
-    [{add_module, Mod}];
+    {add_module, Mod};
 
 module_instructions(Mod, #{status := deleted}, _Ctx) ->
-    [{delete_module, Mod}];
+    {delete_module, Mod};
 
-module_instructions(Mod, #{status := modified}, #{vsn := FromVer, next_vsn := ToVer, appname := AppName, profile := Profile}) ->
+module_instructions(Mod, #{status := modified}, #{appname := AppName, profile := Profile}) ->
     BeamInfo = beam_info(AppName, Mod, Profile),
+    WithUpgradeHook = has_upgrade_hook(BeamInfo),
     case is_supervisor(BeamInfo) of
         true ->
-            case has_sup_upgrade_notify(BeamInfo) of
-                true ->
-                    [{update, Mod, supervisor},
-                     {apply, {Mod, sup_upgrade_notify, [FromVer, ToVer]}}
-                    ];
-                false ->
-                    [{update, Mod, supervisor}]
-            end;
+            {
+                update_supervisor,
+                Mod,
+                has_sup_upgrade_notify(BeamInfo),
+                WithUpgradeHook
+            };
         false ->
-            case has_code_change(BeamInfo) of
-                false ->
-                    [{load_module, Mod}];
-                true ->
-                    [{update, Mod, {advanced, {FromVer, ToVer, []}}}]
-            end
-    end
-    ++
-    %% does the module have an upgrade hook callback exported
-    case has_upgrade_hook(BeamInfo) of
-        true ->
-            [{apply, {Mod, appup_upgrade_hook, [FromVer, ToVer]}}];
-        false ->
-            []
-    end
-    .
+            {
+                update_module,
+                Mod,
+                has_code_change(BeamInfo),
+                WithUpgradeHook
+            }
+    end.
 
 is_supervisor(#{behaviours := Behavs}) ->
     lists:member(supervisor, Behavs).
@@ -122,6 +107,118 @@ extract_module_info(Beam) when is_binary(Beam) ->
         exports => Exports
     }.
 
+add_instructions(OldContent, OldVsn, NewVsn, Instrs) ->
+    {Upgrades, Downgrades} = generate_instructions(OldVsn, NewVsn, Instrs),
+    case OldContent of
+        {NewVsn, OldUpgrades, OldDowngrades} ->
+            AddInstrs = fun(L, A) ->
+                case lists:keytake(OldVsn, 1, L) of
+                    {value, {_, O}, R} ->
+                        [{OldVsn, O ++ A} | R];
+                    false -> [{OldVsn, A} | L]
+                end
+            end,
+            {NewVsn,
+                AddInstrs(OldUpgrades, Upgrades),
+                AddInstrs(OldDowngrades, Downgrades)
+            };
+        _ -> {NewVsn,
+                [{OldVsn, Upgrades}],
+                [{OldVsn, Downgrades}]
+            }
+    end.
+
+diff_instructions({OldUpgrInstrs, _OldDwngrdInstrs}, NewInstrs) ->
+    OldInstrs = lists:foldl(fun
+        ({add_module, Name}, Acc) -> [{add_module, Name} | Acc];
+        ({delete_module, Name}, Acc) -> [{delete_module, Name} | Acc];
+        (I, Acc) when is_tuple(I) ->
+            case element(1, I) of
+                load_module -> [{update_module, element(2, I)} | Acc];
+                update -> [{update_module, element(2, I)} | Acc];
+                _ -> Acc
+            end;
+        (_, Acc) -> Acc
+    end, [], OldUpgrInstrs),
+    lists:filter(fun
+        ({add_module, _Name} = I) -> not lists:member(I, OldInstrs);
+        ({delete_module, _Name} = I) -> not lists:member(I, OldInstrs);
+        ({update_supervisor, Name, _, _}) ->
+            not lists:member({update_module, Name}, OldInstrs);
+        ({update_module, Name, _, _}) ->
+            not lists:member({update_module, Name}, OldInstrs)
+    end, NewInstrs).
+
+extract_instructions(FileName, OldVsn, NewVsn) ->
+    case file:consult(FileName) of
+        {ok, [{NewVsn, Upgrades, Downgrades}]} ->
+            {
+                proplists:get_value(OldVsn, Upgrades, []),
+                proplists:get_value(OldVsn, Downgrades, [])
+            };
+        _ -> {[], []}
+    end.
+
+generate_instructions(OldVsn, NewVsn, Instrs) ->
+    {Upgrd, Dwngrd} = lists:foldl(fun
+       ({add_module, Name}, {U, D}) ->
+            {
+                [{add_module, Name} | U],
+                [{delete_module, Name} | D]
+            };
+        ({delete_module, Name}, {U, D}) ->
+            {
+                [{delete_module, Name} | U],
+                [{add_module, Name} | D]
+            };
+        ({update_supervisor, Name, UpgradeNotify, UpgradeHook}, {U, D}) ->
+            {UHook, DHook} = case UpgradeHook of
+                true ->
+                    {
+                        [{apply, {Name, appup_upgrade_hook, [OldVsn, NewVsn]}}],
+                        [{apply, {Name, appup_upgrade_hook, [NewVsn, OldVsn]}}]
+                    };
+                false -> {[], []}
+            end,
+            {UNotify, DNotify} = case UpgradeNotify of
+                true ->
+                    {
+                        [{apply, {Name, sup_upgrade_notify, [OldVsn, NewVsn]}}],
+                        [{apply, {Name, sup_upgrade_notify, [NewVsn, OldVsn]}}]
+                    };
+                false -> {[], []}
+            end,
+            {
+                UHook ++ UNotify ++ [{update, Name, supervisor} | U],
+                DHook ++ DNotify ++ [{update, Name, supervisor} | D]
+            };
+        ({update_module, Name, CodeChange, UpgradeHook}, {U, D}) ->
+            {UHook, DHook} = case UpgradeHook of
+                true ->
+                    {
+                        [{apply, {Name, appup_upgrade_hook, [OldVsn, NewVsn]}}],
+                        [{apply, {Name, appup_upgrade_hook, [NewVsn, OldVsn]}}]
+                    };
+                false -> {[], []}
+            end,
+            {UI, DI} = case CodeChange of
+                true ->
+                    {
+                        {update, Name, {advanced, {OldVsn, NewVsn, []}}},
+                        {update, Name, {advanced, {NewVsn, OldVsn, []}}}
+                    };
+                false ->
+                    {
+                        {load_module, Name},
+                        {load_module, Name}
+                    }
+            end,
+            {
+                UHook ++ [UI | U],
+                DHook ++ [DI | D]
+            }
+    end, {[], []}, Instrs),
+    {sort_instructions(Upgrd), sort_instructions(Dwngrd)}.
 
 sort_instructions(L) ->
     lists:sort(fun sort_instr_cmp/2, L).
