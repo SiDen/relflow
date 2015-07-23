@@ -21,7 +21,6 @@ add_appup_instructions(FileName, OldVsn, NewVsn, Instructions) ->
     ok = file:write_file(FileName, io_lib:format("~p.", [NewContent])).
 
 set_appfile_version(Filepath, NewVsn) when is_list(Filepath) ->
-    rebar_api:info("Rewriting vsn in ~s",[ filename:basename(Filepath)]),
     {ok, [{application, AppName, Sections}]} = file:consult(Filepath),
     Vsn = proplists:get_value(vsn, Sections),  %% don't need to know previous vsn
     NewSections = [{vsn, NewVsn} | proplists:delete(vsn, Sections)],
