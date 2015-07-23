@@ -335,6 +335,7 @@ rewrite_appups(Map, State) ->
             NewM = case NewVsn == CurVsn of
                 true -> M;
                 false ->
+                    rebar_api:info("Rewriting vsn in ~s: ~s", [AppSrc, NewVsn]),
                     DoIfNotCheckOnly(fun() ->
                         ok = relflow_rewriter:set_appfile_version(AppSrc,NewVsn)
                     end),
@@ -347,6 +348,8 @@ rewrite_appups(Map, State) ->
             case DiffAppupInstructions of
                 [] -> NewM;
                 _ ->
+                    rebar_api:info("Add appup instructions to ~s", [Path]),
+                    rebar_api:debug("~p~n", [DiffAppupInstructions]),
                     DoIfNotCheckOnly(fun() ->
                         relflow_rewriter:add_appup_instructions(Path,
                                             Vsn, NewVsn, DiffAppupInstructions)

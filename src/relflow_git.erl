@@ -119,8 +119,7 @@ add_app_paths(Changes) ->
      ).
 
 since_revision(Rev, IncludeUntracked) when is_list(Rev) ->
-    gather_changed_modules(
-      lists:sort(changed_modules_since(Rev, IncludeUntracked))).
+    gather_changed_modules(changed_modules_since(Rev, IncludeUntracked)).
 
 
 appver_at_revision(Rev, Name, DirType) ->
@@ -194,7 +193,7 @@ changed_modules_since(Rev, IncludeUntracked) when is_list(Rev) ->
             true -> git_untracked();
             false -> []
         end,
-    lists:map(fun({Type, Line}) ->
+    lists:sort(lists:foldl(fun({Type, Line}, Acc) ->
         [Status, Path] = case Type of
             git ->
                 case string:tokens(Line, "\t") of
@@ -215,14 +214,16 @@ changed_modules_since(Rev, IncludeUntracked) when is_list(Rev) ->
         %% directories where OTP applications for the project can be located
         %% {project_app_dirs, ["apps", "lib", "."]}.
         case filename:split(Path) of
+            ["apps", _, "test" | _] -> [];
+            ["test" | _] -> [];
             ["apps", AppName, "src" | _] ->
-                {AppName, Module, ModInfo};
+                [{AppName, Module, ModInfo}];
             ["src" | _] ->
                 %% we lookup the app name at the end, during gathering:
                 AppName = "$$single_app",
-                {AppName, Module, ModInfo}
-        end
-    end, Files).
+                [{AppName, Module, ModInfo}]
+        end ++ Acc
+    end, [], Files)).
 
 gather_changed_modules(List) ->
     lists:foldl(fun({AppStr, Changes}, Acc) ->
