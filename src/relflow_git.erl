@@ -250,7 +250,7 @@ gather_changed_modules([], Acc) ->
 
 detect_application_changes(Changes, Rev, IncludeUntracked) ->
     ListFromBranch = fun(Br) ->
-        Cmd = "git ls-tree --name-only "++Br++" "++"apps/*",
+        Cmd = "git ls-tree --name-only "++Br++" "++"apps/",
         lists:foldl(fun(Path, Acc) ->
             SplittedPath = string:tokens(Path, "/"),
             Last = lists:last(SplittedPath),
