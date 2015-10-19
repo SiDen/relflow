@@ -114,7 +114,7 @@ Add the relflow plugin to your `rebar.config`:
 
 <pre>
 {plugins, [
-    {relflow, ".*", {git, "https://github.com/RJ/relflow.git", {branch, "master"}}}
+    {relflow, ".*", {git, "https://github.com/SiDen/relflow.git", {branch, "master"}}}
 ]}.
 </pre>
 
