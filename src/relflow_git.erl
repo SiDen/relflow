@@ -110,7 +110,7 @@ add_app_paths(Changes) ->
                       maps:put(appsrc_path, AppSrc, M1);
                   false ->
                       AppSrc = fmt("apps/~s/src/~s.app.src", [AppName, AppName]),
-                      Appup  = fmt("apps/~s/src/~s.appup.src",  [AppName, AppName]),
+                      Appup  = fmt("apps/~s/ebin/~s.appup",  [AppName, AppName]),
                       M1 = maps:put(appup_path,  Appup,  AppMap),
                       maps:put(appsrc_path, AppSrc, M1)
               end

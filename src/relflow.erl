@@ -298,7 +298,7 @@ do_git(FilesTouched, State) ->
     GitAddCmds = [ fmt("git add ~s", [AddFile]) || AddFile <- FilesTouched ],
     GitCmds = GitAddCmds ++ [
         fmt("git commit -m\"relflow ~s --> ~s\"", [relflow_state:oldrelver(State), NewRelVsn]),
-        fmt("git tag v~s", [NewRelVsn])
+        fmt("git tag ~s", [NewRelVsn])
     ],
     case {relflow_state:autogit(State), relflow_state:force(State)} of
         {true, false}  -> exec_git(GitCmds);
